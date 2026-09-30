@@ -353,13 +353,44 @@ mod anchor_info_discovery_tests {
         set_ledger(&env, 0);
         let (client, anchor) = setup(&env);
 
-        client.fetch_anchor_info(&anchor, &sample_toml(&env), &String::from_str(&env, "Test SDF Network ; September 2015"), &Some(3600u64));
-        let _ = client.get_anchor_toml(&anchor);
+        let toml_v1 = sample_toml(&env);
+        client.fetch_anchor_info(&anchor, &toml_v1, &String::from_str(&env, "Test SDF Network ; September 2015"), &Some(3600u64));
 
+        // Assert the pre-refresh read returns the originally cached data.
+        let cached = client.get_anchor_toml(&anchor);
+        assert_eq!(cached.version, String::from_str(&env, "2.0.0"));
+        assert_eq!(cached.signing_key, Some(String::from_str(&env, "GSIGN123")));
+
+        // Force-refresh clears the cache entry.
         client.refresh_anchor_info(&anchor, &true);
 
+        // Cache must be absent immediately after a force refresh.
         let result = client.try_get_anchor_toml(&anchor);
-        assert!(result.is_err());
+        assert!(result.is_err(), "cache should be cleared after force refresh");
+
+        // Re-populating the cache with updated data must succeed and return the new content.
+        let mut updated_currencies = soroban_sdk::Vec::new(&env);
+        updated_currencies.push_back(usdc_asset(&env));
+        let mut updated_accounts = soroban_sdk::Vec::new(&env);
+        updated_accounts.push_back(String::from_str(&env, "GANCHOR2"));
+        let toml_v2 = StellarToml {
+            version: String::from_str(&env, "3.0.0"),
+            network_passphrase: String::from_str(&env, "Test SDF Network ; September 2015"),
+            accounts: updated_accounts,
+            signing_key: Some(String::from_str(&env, "GNEWKEY456")),
+            currencies: updated_currencies,
+            fiat_currencies: soroban_sdk::Vec::new(&env),
+            transfer_server: String::from_str(&env, "https://new.example.com"),
+            transfer_server_sep0024: String::from_str(&env, "https://new.example.com/sep24"),
+            kyc_server: String::from_str(&env, "https://new-kyc.example.com"),
+            web_auth_endpoint: String::from_str(&env, "https://new-auth.example.com"),
+            claimable_balance_supported: false,
+        };
+        client.fetch_anchor_info(&anchor, &toml_v2, &String::from_str(&env, "Test SDF Network ; September 2015"), &Some(3600u64));
+        let refreshed = client.get_anchor_toml(&anchor);
+        assert_eq!(refreshed.version, String::from_str(&env, "3.0.0"),
+            "post-refresh read should return the updated content, not the old version");
+        assert_eq!(refreshed.signing_key, Some(String::from_str(&env, "GNEWKEY456")));
     }
 
     #[test]
