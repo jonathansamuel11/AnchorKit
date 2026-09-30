@@ -4,6 +4,7 @@ mod routing_tests {
     use soroban_sdk::{
         testutils::{Address as _, Events, Ledger, LedgerInfo},
         Address, Env, String, Symbol, Vec, symbol_short,
+        TryFromVal,
     };
 
     use ed25519_dalek::SigningKey;
@@ -643,19 +644,31 @@ mod routing_tests {
             fallback_chain: Vec::new(&env),
         };
 
-        // Expect RoutingDecision event with correct fields
-        let event = RoutingDecisionEvent {
-            anchor: anchor.clone(),
-            strategy: String::from_str(&env, "LowestFee"),
-            quote_id: 1u64,
-            ledger_sequence: 0u32,
-        };
-        let topics = (symbol_short!("routing"),);
-        let _ = (&topics, &event);
-
+        let events_before = env.events().all().len();
         let best = client.route_transaction(&options);
+        let all_events = env.events().all();
+
+        // Exactly one new event must have been emitted.
+        assert_eq!(all_events.len(), events_before + 1,
+            "route_transaction should emit exactly one RoutingDecisionEvent");
+
         assert_eq!(best.anchor, anchor);
         assert_eq!(best.quote_id, 1u64);
+
+        // Verify the emitted event has the correct topic and payload.
+        let (_publisher, topics, event_data) = all_events.last().unwrap();
+        assert_eq!(topics.len(), 1);
+        assert_eq!(
+            soroban_sdk::Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+            symbol_short!("routing"),
+            "event topic should be \"routing\""
+        );
+
+        let emitted = RoutingDecisionEvent::try_from_val(&env, &event_data).unwrap();
+        assert_eq!(emitted.anchor, anchor, "emitted anchor must match routed anchor");
+        assert_eq!(emitted.strategy, String::from_str(&env, "LowestFee"),
+            "emitted strategy must match the requested strategy");
+        assert_eq!(emitted.quote_id, 1u64, "emitted quote_id must match the winning quote");
     }
 
     #[test]
